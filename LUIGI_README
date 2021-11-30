@@ -1,0 +1,6 @@
+# Running luigi
+export PYTHONPATH="$PYTHONPATH:<directory where hello_luigi.py resides>"	//export PYTHONPATH="$PYTHONPATH:."
+luigid //Run server
+python3 first_example.py //Run flow
+luigi --module first_example  examples.PerlPi --local-schedule
+
