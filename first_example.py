@@ -15,6 +15,11 @@ mc_options =\
         "mc2": { 'type': 'mc2', 'mcweight': '0.0125', 'nevents': '40000', 'njobs': 4 }
     }
 
+select_mc_options = [
+    { 'region': 'signal', 'variation': 'shape_conv_up', 'suffix': 'shape_conv_up' },
+    { 'region': 'signal', 'variation': 'shape_conv_dn', 'suffix': 'shape_conv_dn' },
+    { 'region': 'signal', 'variation': 'nominal,weight_var1_up,weight_var1_dn', 'suffix': 'nominal' }
+]
 
 def generatePrepareCommand():
     return f"""
@@ -118,6 +123,7 @@ def merge_root_GenerateCommand(type, njobs):
         """
     #while [ $C -le $((END)) ]; do INPUTS="$INPUTS $BASE_DIR/$BASE_$C.root"; ((C++)); done
     #while [ $C -le $((END)) ]; do INPUTS="$INPUTS $BASE_DIR/$BASE_$C.root"; $((C++)); done
+    
 class Merge_Root(luigi.Task):
     task_namespace = 'bsm-search'
     data = luigi.DictParameter()
@@ -148,12 +154,53 @@ class Merge_Root(luigi.Task):
 
 #----------------------------------- Merge Root Operation End -----------------------------------
 
+#----------------------------------- Select Operation Start -----------------------------------
+def select_data_genertion(type, njobs, suffix, region, variation):
+    return{
+        'merge_root_data': {'type': type, 'njobs': njobs},
+        'input_file': type+'.root',
+        'output_file': type+'_'+suffix+'.root',
+        'region': region,
+        'variation': variation
+    }
+
+def select_GenerateCommand(input_file, output_file, region, variation):
+    return f"""
+        set -x
+            source {thisroot_dir}/thisroot.sh        
+            python {code_dir}/select.py {base_dir}/{input_file} {base_dir}/{output_file} {region} {variation}
+        """
+
+class Select(luigi.Task):
+    task_namespace = 'bsm-search'
+    data = luigi.DictParameter()
+
+    def requires(self):
+        data = merge_root_data_generation(self.data['merge_root_data']['type'],self.data['merge_root_data']['njobs'])
+        return Merge_Root(data)
+
+    def output(self):
+        output_file = self.data['output_file']
+        return luigi.LocalTarget(output_file)
+    
+    def run(self):
+        input_file = self.data['input_file']
+        output_file = self.data['output_file']
+        region = self.data['region']
+        variation = self.data['variation']
+        bashCommand = select_GenerateCommand(input_file, output_file,region,variation)
+        process = subprocess.Popen(bashCommand, shell = True, executable='/bin/bash',stdout = subprocess.PIPE, stderr = subprocess.PIPE)
+        output, error = process.communicate()
+        print("The command is: \n",bashCommand)
+        print("The output is: \n",output.decode())
+        print("The error is: \n",error.decode())
+#----------------------------------- Select Operation End -----------------------------------
+
 if __name__ == '__main__':
     #luigi.run(['bsm-search.PrepareDirectory', '--workers', '1', '--local-scheduler'])
     #luigi.run(['bsm-search.Scatter', '--workers', '1', '--local-scheduler'])
     #luigi.build(list_of_tasks, workers=1, local_scheduler=True)
     
-
     '''
     for key in mc_options.keys():
         njobs = mc_options[key]['njobs']
@@ -163,10 +210,17 @@ if __name__ == '__main__':
             list_of_tasks.append(Generate(data))
             #print(deps_tree.print_tree(Generate(data)))
     '''
+    '''
     for key in mc_options.keys():
         njobs = mc_options[key]['njobs']
         data = merge_root_data_generation(key, njobs)
         list_of_tasks.append(Merge_Root(data))
+    '''
+    for key in mc_options.keys():
+        for option in select_mc_options:
+            njobs = mc_options[key]['njobs']
+            data = select_data_genertion(key, njobs, option['suffix'], option['region'], option['variation'])
+            list_of_tasks.append(Select(data))
 
     luigi.build(list_of_tasks, workers = 4)
     
