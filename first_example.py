@@ -29,9 +29,14 @@ hist_shape_mc_options = [
 variations_hist_shape_mc_options = \
     {
         'mc1': 'nominal',
-        'mc2': 'nominal',
+        'mc2': 'nominal'
     }
   
+hist_weight_mc_options = \
+    {
+        'mc1' : ['nominal'],
+        'mc2' : ['nominal']
+    }
 
 def generatePrepareCommand():
     return f"""
@@ -111,7 +116,6 @@ class Scatter(luigi.Task):
         json_object = { option:[i+1 for i in range(options[option]['njobs'])]}
         with open(output_file,'w') as outfile:
             json.dump(json_object,outfile)
-
 #----------------------------------- Merge Root Operation Start -----------------------------------
 def merge_root_data_generation(type, njobs):
     output_file =  base_dir + "/" + type + ".root"
@@ -163,7 +167,6 @@ class Merge_Root(luigi.Task):
         print("The command is: \n",bashCommand)
         print("The output is: \n",output.decode())
         print("The error is: \n",error.decode())
-
 #----------------------------------- Merge Root Operation End -----------------------------------
 
 #----------------------------------- Select Operation Start -----------------------------------
@@ -261,19 +264,157 @@ class Hist_Shape(luigi.Task):
         print("The error is: \n",error.decode())
 #----------------------------------- Hist Shape Operation End -----------------------------------
 
+#----------------------------------- Hist Weight Operation Start -----------------------------------
+def hist_weight_data_genertion(type, njobs,shapevar, weight, variations):
+    input_file = ''
+    output_file = type+'_hist.root'
+    if('mc' in type or 'sig' in type):
+        input_file = type+'_'+shapevar+'.root'
+        output_file = type+'_'+shapevar+'_hist.root'
+    return {
+        'input_file': base_dir + '/' + input_file,
+        'output_file': base_dir + '/' + output_file,
+        'type':type,
+        'njobs':njobs,
+        'weight':weight,
+        'variations':variations
+        }
+
+def hist_weight_GenerateCommand(type, input_file, output_file, weight,variations):
+    return f"""
+        set -x
+        source {thisroot_dir}/thisroot.sh        
+        variations=$(echo {variations}|sed 's| |,|g')
+        name={type}
+        python {code_dir}/histogram.py {input_file} {output_file} $name {weight} {variations}
+    """
+    
+class Hist_Weight(luigi.Task):
+    task_namespace = 'bsm-search'
+    data = luigi.DictParameter()
+
+    def requires(self):
+        select_list = []
+        type = self.data['type']
+        for option in select_mc_options:
+            njobs = self.data['njobs']
+            data = select_data_genertion(type, njobs, option['suffix'], option['region'], option['variation'])
+            select_list.append(Select(data))
+        return select_list
+
+    def output(self):
+        output_file = self.data['output_file']
+        return luigi.LocalTarget(output_file)
+    
+    def run(self):
+        type = self.data['type']
+        input_file = self.data['input_file']
+        output_file = self.data['output_file']
+        weight = self.data['weight']
+        variations = self.data['variations']
+        bashCommand = hist_weight_GenerateCommand(type, input_file, output_file, weight, variations)
+        process = subprocess.Popen(bashCommand, shell = True, executable='/bin/bash',stdout = subprocess.PIPE, stderr = subprocess.PIPE)
+        output, error = process.communicate()
+        print("The command is: \n",bashCommand)
+        print("The output is: \n",output.decode())
+        print("The error is: \n",error.decode())
+#----------------------------------- Hist Weight Operation End -----------------------------------
+
+
+#----------------------------------- Merge Explicit Operation Start -----------------------------------
+def merge_explicit_data_genertion(option, operation, variations): #, njobs, weight, ):
+    type = option['type']
+    input_files = ''
+    output_file = type+'_merged_hist.root'
+
+    if('mc' in type):
+        if('merge_hist_shape' in operation):
+            input_files = type+'_shape_conv_up_hist.root '+type+'_shape_conv_dn_hist.root'
+            output_file = type+'_shape_hist.root'
+        elif('merge_hist_all' in operation):
+            input_files = type+'_nominal_hist.root '+type+'_shape_hist.root'
+    elif('sig' in type):
+        input_files = type+'_nominal_hist.root'
+    elif('data' in type):
+        input_files = type+"_hist.root qcd_hist.root"
+    elif('all' in type):
+        input_files = "mc1_merged_hist.root mc2_merged_hist.root sig_merged_hist.root data_merged_hist.root"
+        output_file = "all_merged_hist.root"      
+    return{
+        'option': option,
+        'input_files': input_files,
+        'operation' : operation,
+        'output_file': base_dir + "/" + output_file,
+        'variations' : variations
+    }
+
+def merge_explicit_GenerateCommand(input_files, output_file):
+    return f"""
+        set -x
+        input_files=${input_files}
+        INPUTS=""
+        for i in {input_files}; do
+        INPUTS="$INPUTS $(printf {base_dir}/$i)"
+        done
+        source {thisroot_dir}/thisroot.sh        
+        hadd -f {output_file} $INPUTS
+    """
+
+class Merge_Explicit(luigi.Task):
+    task_namespace = 'bsm-search'
+    data = luigi.DictParameter()
+
+    def requires(self):
+        dependency_list = []
+        option = self.data['option']
+        type = option['type']
+        njobs = option['njobs']
+        weight = option['mcweight']
+        operation = self.data['operation']
+        variations = self.data['variations']
+        if ('merge_hist_all' in operation):
+            data = merge_explicit_data_genertion(option, 'merge_hist_shape', variations)
+            dependency_list.append(Merge_Explicit(data))
+            for weight_option in hist_weight_mc_options[type]:
+                data = hist_weight_data_genertion(type, njobs, weight_option, weight, variations)
+                dependency_list.append(Hist_Weight(data))
+        else:
+            for shape_option in hist_shape_mc_options:
+                data = hist_shape_data_genertion(type, njobs, shape_option['shapevar'], weight, variations)
+                dependency_list.append(Hist_Shape(data))
+
+        return dependency_list
+
+    def output(self):
+        output_file = self.data['output_file']
+        return luigi.LocalTarget(output_file)
+    
+    def run(self):
+        input_files = self.data['input_files']
+        output_file = self.data['output_file']   
+        bashCommand = merge_explicit_GenerateCommand(input_files, output_file)
+        process = subprocess.Popen(bashCommand, shell = True, executable='/bin/bash',stdout = subprocess.PIPE, stderr = subprocess.PIPE)
+        output, error = process.communicate()
+        print("The command is: \n",bashCommand)
+        print("The output is: \n",output.decode())
+        print("The error is: \n",error.decode())
+#----------------------------------- Merge Explicit Operation End -----------------------------------
+
+
+
+
 if __name__ == '__main__':
     #luigi.run(['bsm-search.PrepareDirectory', '--workers', '1', '--local-scheduler'])
     #luigi.run(['bsm-search.Scatter', '--workers', '1', '--local-scheduler'])
     #luigi.build(list_of_tasks, workers=1, local_scheduler=True)
     
     '''
-    for key in mc_options.keys():
-        njobs = mc_options[key]['njobs']
-        nevents = mc_options[key]['nevents']
-        for i in range (0, njobs):
-            data = generate_data_generation(key, nevents, i+1)
-            list_of_tasks.append(Generate(data))
-            #print(deps_tree.print_tree(Generate(data)))
+    def requires(self):
+        select_list = []
+        type = self.data['type']
+        for option in select_mc_options:
+            njobs = self.data['njobs']
+            data = select_data_genertion(typ
     '''
     '''
     for key in mc_options.keys():
@@ -288,6 +429,7 @@ if __name__ == '__main__':
             data = select_data_genertion(key, njobs, option['suffix'], option['region'], option['variation'])
             list_of_tasks.append(Select(data))
     '''
+    '''
     for key in mc_options.keys():
         njobs = mc_options[key]['njobs']
         weight = mc_options[key]['mcweight']
@@ -295,7 +437,33 @@ if __name__ == '__main__':
         for option in hist_shape_mc_options:    
             data = hist_shape_data_genertion(key, njobs, option['shapevar'], weight, variations)
             list_of_tasks.append(Hist_Shape(data))
-
+        for option in hist_weight_mc_options[key]:
+            data = hist_weight_data_genertion(key, njobs, option, weight, variations)
+            list_of_tasks.append(Hist_Weight(data))
+    '''
+    '''
+    for key in mc_options.keys():
+        option = mc_options[key]
+        type = option['type']
+        njobs = option['njobs']
+        weight = option['mcweight']
+        variations = variations_hist_shape_mc_options[type]
+        data = merge_explicit_data_genertion(option, 'merge_hist_shape')
+        list_of_tasks.append(Merge_Explicit(data))
+        for weight_option in hist_weight_mc_options[type]:
+            data = hist_weight_data_genertion(type, njobs, weight_option, weight, variations)
+            list_of_tasks.append(Hist_Weight(data))
+    '''
+    for key in mc_options.keys():
+        option = mc_options[key]
+        type = option['type']
+        njobs = option['njobs']
+        weight = option['mcweight']
+        variations = variations_hist_shape_mc_options[type]
+        data = merge_explicit_data_genertion(option, 'merge_hist_all', variations)
+        list_of_tasks.append(Merge_Explicit(data))
+        
+    
     luigi.build(list_of_tasks, workers = 4)
     
     #luigi.build(AllTasks)
