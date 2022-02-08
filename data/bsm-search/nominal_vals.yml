@@ -1,0 +1,30 @@
+Lumi:
+  err: 0.0
+  max: 10.0
+  min: 0.0
+  val: 1.0
+SigXsecOverSM:
+  err: 0.0
+  max: 3.0
+  min: 0.0
+  val: 1.0
+alpha_mc1_shape_conv:
+  err: 0.0
+  max: 5.0
+  min: -5.0
+  val: 0.0
+alpha_mc1_weight_var1:
+  err: 0.0
+  max: 5.0
+  min: -5.0
+  val: 0.0
+alpha_mc2_shape_conv:
+  err: 0.0
+  max: 5.0
+  min: -5.0
+  val: 0.0
+alpha_mc2_weight_var1:
+  err: 0.0
+  max: 5.0
+  min: -5.0
+  val: 0.0

@@ -68,6 +68,26 @@ hist_weight_data_options = \
     }
 #----------------------------------- DATA CONFIGURATIONS END ----------------------------------- 
 
+#
+
+makews_outputs = [
+    base_dir + "/xmldir",
+    base_dir + "/results_results.table",
+    base_dir + "/results_meas.root",
+    base_dir + "/results_combined_meas_model.root",
+    base_dir + "/results_combined_meas_profileLR.eps",
+    base_dir + "/results_channel1_meas_profileLR.eps",
+    base_dir + "/results_channel1_meas_model.root"
+]
+
+plot_outputs = [
+    base_dir + "/nominal_vals.yml",
+    base_dir + "/fit_results.yml",
+    base_dir + "/prefit.pdf",
+    base_dir + "/postfit.pdf"
+]
+
+#
 
 def generatePrepareCommand():
     return f"""
@@ -525,11 +545,12 @@ class Makews(luigi.Task):
         return Merge_Explicit(data)
         
     def output(self):
-        data = self.data
         output_files = []
-        for key in data.keys():
-            output_files.append(data[key])
-        return luigi.LocalTarget(output_files)
+        for file in makews_outputs:
+            output_files.append(luigi.LocalTarget(file))
+        return output_files
+        
+        #return luigi.LocalTarget(base_dir + '/results_combined_meas_model.root')
     
     def run(self): 
         bashCommand = makews_GenerateCommand(self.data)
@@ -543,23 +564,69 @@ class Makews(luigi.Task):
             exit("Return code : "+ str(process.returncode) + " \nError message: " + error.decode())
 #----------------------------------- Makews Operation End -----------------------------------
 
+#----------------------------------- Plot Operation Start -----------------------------------
+def plot_data_generation(combined_model, nominal_vals, fit_results, prefit_plot, postfit_plot):
+    return {
+        'combined_model':combined_model,
+        'nominal_vals':nominal_vals,
+        'fit_results':fit_results,
+        'prefit_plot':prefit_plot,
+        'postfit_plot':postfit_plot
+        }
+
+def plot_GenerateCommand(data):
+    return f"""
+        set -x
+        source {thisroot_dir}/thisroot.sh
+        hfquickplot write-vardef {data['combined_model']} combined {data['nominal_vals']}
+        hfquickplot plot-channel {data['combined_model']} combined channel1 x {data['nominal_vals']} -c qcd,mc2,mc1,signal -o {data['prefit_plot']}
+        hfquickplot fit {data['combined_model']} combined {data['fit_results']}
+        hfquickplot plot-channel {data['combined_model']} combined channel1 x {data['fit_results']} -c qcd,mc2,mc1,signal -o {data['postfit_plot']}
+	"""
+
+class Plot(luigi.Task):
+    task_namespace = 'bsm-search'
+    data = luigi.DictParameter()
+
+    def requires(self):
+        data_bkg_hists = base_dir + "/all_merged_hist.root"
+        workspace_prefix = base_dir + "/results"
+        xml_dir = base_dir + "/xmldir"
+        data = makews_data_generation(data_bkg_hists, workspace_prefix, xml_dir)
+        return Makews(data)
+        
+    def output(self):
+        output_files = []
+        for file in plot_outputs:
+            output_files.append(luigi.LocalTarget(file))
+        return output_files
+    
+    def run(self):
+        bashCommand = plot_GenerateCommand(self.data)
+        process = subprocess.Popen(bashCommand, shell = True, executable='/bin/bash',stdout = subprocess.PIPE, stderr = subprocess.PIPE)
+        output, error = process.communicate()
+        print("The command is: \n",bashCommand)
+        print("The output is: \n",output.decode())
+        print("Return Code:", process.returncode)
+        if process.returncode and error:
+            print("The error is: \n",error.decode())
+            exit("Return code : "+ str(process.returncode) + " \nError message: " + error.decode())
+
+#----------------------------------- Plot Operation End -----------------------------------
+
+
+
 if __name__ == '__main__':
 
     #------------------------------------ COMBINING START ------------------------------------
-    data_bkg_hists = base_dir+"/all_merged_hist.root"
-    workspace_prefix = base_dir+"/results"
-    xml_dir = base_dir+"/xmldir"
-    data = makews_data_generation(data_bkg_hists, workspace_prefix, xml_dir)
-    list_of_tasks.append(Makews(data))
+    combined_model = base_dir + '/results_combined_meas_model.root'
+    nominal_vals = plot_outputs[0]
+    fit_results = plot_outputs[1]
+    prefit_plot = plot_outputs[2]
+    postfit_plot = plot_outputs[3]
+    data = plot_data_generation(combined_model, nominal_vals, fit_results, prefit_plot, postfit_plot)
+    list_of_tasks.append(Plot(data))
     luigi.build(list_of_tasks, workers = 4)
     #------------------------------------ COMBINING END ------------------------------------
 
 
-
-'''
-
-def makews_op(data):
-    data_bkg_hists = data['data_bkg_hists']
-    workspace_prefix = data['workspace_prefix']
-    xml_dir = data['xml_dir']
-'''
